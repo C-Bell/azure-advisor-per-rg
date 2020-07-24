@@ -1,0 +1,44 @@
+#loop through each context and get the subscriptions
+foreach($context in $contexts){
+    Set-AzContext -Context $context;
+ 
+    write-host $context.Subscription;
+ 
+    # Check if the subscription is enabled
+    if($context.Subscription.State -eq 'Enabled'){
+        # Moved the token into the context loop 1) to get it refreshed for each Invoke-RestMethod call and 2) in case the tenant changed
+        $azProfile = [Microsoft.Azure.Commands.Common.Authentication.Abstractions.AzureRmProfileProvider]::Instance.Profile
+        $profileClient = New-Object -TypeName Microsoft.Azure.Commands.ResourceManager.Common.RMProfileClient -ArgumentList ($azProfile)
+        $token = $profileClient.AcquireAccessToken($context.Subscription.TenantId)
+        $authHeader = @{
+            'Content-Type'='application/json'
+            'Authorization'='Bearer ' + $token.AccessToken
+        }
+ 
+        # Define the REST API to communicate with
+        # Use double quotes for $restUri as some endpoints take strings passed in single quotes
+        $id = $context.Subscription.Id;
+       
+        # Getting the environment in order to use the correct REST API Url
+        $azEnvironment = Get-AzEnvironment -Name $context.Environment;
+        $rmUrl = $azEnvironment.ResourceManagerUrl;
+              
+        $restUri = "https://management.azure.com/subscriptions/fbaa5434-4386-4e71-b45b-0030e15f73f8/providers/Microsoft.Advisor/recommendations?api-version=2017-04-19"
+ 
+        # Invoke the REST API
+        $response = Invoke-RestMethod -Uri $restUri -Method GET -Headers $authHeader
+ 
+        $subinfo = New-Object System.Object
+        $subinfo | Add-Member -Type NoteProperty -Name Subscription -Value $context.Subscription.Name;
+        $subinfo | Add-Member -Type NoteProperty -Name ResourceGroup  -Value $response.value.id.Split("/")[-9];
+        $subinfo | Add-Member -Type NoteProperty -Name Resource  -Value $response.value.id.Split("/")[-5];
+        $subinfo | Add-Member -Type NoteProperty -Name ResourceType  -Value $response.value.properties[0].impactedField;
+        $subinfo | Add-Member -Type NoteProperty -Name Problem  -Value $response.value.properties.shortDescription[0].Problem;
+        $subinfo | Add-Member -Type NoteProperty -Name Solution  -Value $response.value.properties.shortDescription[0].solution;
+ 
+        $subscriptions += $subinfo
+ 
+    } #Close of the If state enabled
+} #Close of the foreach that loops the contexts
+ 
+$subscriptions | Export-Csv $OutFilePath -NoTypeInformation;
